@@ -1,8 +1,8 @@
 ##
 # SmartAutoPwn - Intelligent Automated Exploitation Plugin for Metasploit Framework
 #
-# Author  :Aditya Singh
-# Version : 3.0.1 (Fixed)
+# Author  : Aditya Singh
+# Version : 3.0.2 (Syntax & Logic Fixed)
 # License : MIT (for authorized penetration testing only)
 #
 # FEATURES:
@@ -545,7 +545,7 @@ module Msf
 
         nse_cmd = [
           'nmap', '-sV',
-          "--script="#{nse_scripts}"",
+          "--script=\"#{nse_scripts}\"",
           '-T4', '--open',
           "-oX #{nse_xml}",
           '-oN -',
@@ -700,7 +700,7 @@ module Msf
             next if term.length < 4 || searched_terms.include?(term.downcase)
             searched_terms << term.downcase
 
-            out, ok = run_cmd("searchsploit --json "#{term}" 2>/dev/null")
+            out, ok = run_cmd("searchsploit --json \"#{term}\" 2>/dev/null")
             next unless ok
 
             begin
@@ -805,7 +805,7 @@ module Msf
 
         print_good("Found \e[32m#{all_exploits.size}\e[0m exploit(s) for #{target}:")
         print_line
-        print_line("  \e[36m#{'RANK'.ljust(16)} AISCORE  PORT   SERVICE     MODULE'\e[0m")
+        print_line("  \e[36m#{'RANK'.ljust(16)} AISCORE  PORT   SERVICE     MODULE\e[0m")
         print_line('  ' + '─' * 78)
 
         all_exploits.first(25).each_with_index do |e, idx|
@@ -844,7 +844,7 @@ module Msf
         stop_on_session  = opts.key?('stop-on-session')
 
         print_status("SmartAutoPwn: launching auto-exploitation on \e[33m#{target}\e[0m")
-        print_status("  Min Rank : #{min_rank_name} (score ≥ #{min_score})")
+        print_status("  Min Rank : #{min_rank_name} (score >= #{min_score})")
         print_status("  LHOST    : #{lhost}")
         print_status("  LPORT    : #{lport_base}+")
         print_line
@@ -853,7 +853,7 @@ module Msf
         @ranked_exploits ||= {}
 
         # Ensure we have exploit data
-        if @ranked_exploits[target].nil?
+        if @ranked_exploits[target].nil? || @ranked_exploits[target].empty?
           print_status("No cached exploit list. Running smart_exploits first...")
           cmd_smart_exploits(target)
         end
@@ -869,7 +869,7 @@ module Msf
         end
 
         if exploits.empty?
-          print_warning("No exploits with rank ≥ #{min_rank_name} found for #{target}")
+          print_warning("No exploits with rank >= #{min_rank_name} found for #{target}")
           return
         end
 
