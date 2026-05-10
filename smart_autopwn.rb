@@ -2,7 +2,7 @@
 # SmartAutoPwn - Intelligent Automated Exploitation Plugin for Metasploit Framework
 #
 # Author  :Aditya Singh
-# Version : 3.0.0
+# Version : 3.0.1 (Fixed)
 # License : MIT (for authorized penetration testing only)
 #
 # FEATURES:
@@ -16,10 +16,6 @@
 #   - Auto-exploit with configurable rank threshold
 #   - HTML + PDF + JSON report generation
 #   - Full pipeline with one command: smart_scan <IP>
-#
-# INSTALL:
-#   cp smart_autopwn.rb ~/.msf4/plugins/
-#   msfconsole -x "load smart_autopwn"
 ##
 
 require 'thread'
@@ -549,7 +545,7 @@ module Msf
 
         nse_cmd = [
           'nmap', '-sV',
-          "--script=\"#{nse_scripts}\"",
+          "--script="#{nse_scripts}"",
           '-T4', '--open',
           "-oX #{nse_xml}",
           '-oN -',
@@ -704,7 +700,7 @@ module Msf
             next if term.length < 4 || searched_terms.include?(term.downcase)
             searched_terms << term.downcase
 
-            out, ok = run_cmd("searchsploit --json \"#{term}\" 2>/dev/null")
+            out, ok = run_cmd("searchsploit --json "#{term}" 2>/dev/null")
             next unless ok
 
             begin
@@ -798,6 +794,10 @@ module Msf
         # AI sort: descending by ai_score, then by rank
         all_exploits.sort_by! { |e| [-e[:ai_score], -(EXPLOIT_RANK_SCORES[e[:module]['rank']] || 0)] }
 
+        # Cache for autopwn
+        @ranked_exploits       ||= {}
+        @ranked_exploits[target] = all_exploits
+
         if all_exploits.empty?
           print_warning("No exploits found for #{target} above rank: #{min_rank_name}")
           return
@@ -828,10 +828,6 @@ module Msf
         print_line
         print_status("Showing top 25 of #{all_exploits.size} total. Use --rank excellent for top-tier only.")
         print_status("Run: smart_autopwn #{target} --rank excellent   to auto-attempt these")
-
-        # Cache for autopwn
-        @ranked_exploits       ||= {}
-        @ranked_exploits[target] = all_exploits
       end
 
       # ================================================================
@@ -853,13 +849,22 @@ module Msf
         print_status("  LPORT    : #{lport_base}+")
         print_line
 
+        # Ensure the cache hash is initialized
+        @ranked_exploits ||= {}
+
         # Ensure we have exploit data
-        unless @ranked_exploits && @ranked_exploits[target]
+        if @ranked_exploits[target].nil?
           print_status("No cached exploit list. Running smart_exploits first...")
           cmd_smart_exploits(target)
         end
 
-        exploits = (@ranked_exploits[target] || []).select do |e|
+        # Safety check if still nil or empty (e.g. no services found in DB)
+        if @ranked_exploits[target].nil? || @ranked_exploits[target].empty?
+          print_error("No exploits found to attempt. Verify services are in the DB (smart_portscan).")
+          return
+        end
+
+        exploits = @ranked_exploits[target].select do |e|
           (EXPLOIT_RANK_SCORES[e[:module]['rank']] || 0) >= min_score
         end
 
