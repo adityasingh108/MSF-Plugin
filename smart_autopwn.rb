@@ -1,7 +1,7 @@
 ##
 # SmartAutoPwn - Intelligent Automated Exploitation Plugin for Metasploit Framework
 #
-# Author  : SmartAutoPwn Project
+# Author  :Aditya Singh
 # Version : 3.0.0
 # License : MIT (for authorized penetration testing only)
 #
@@ -312,7 +312,11 @@ module Msf
       # ================================================================
       def cmd_smart_help(*args)
         print_line(BANNER)
-        print_line('  AVAILABLE COMMANDS'.colorize(:bold) rescue '  AVAILABLE COMMANDS')
+        begin
+          print_line('  AVAILABLE COMMANDS'.colorize(:bold))
+        rescue
+          print_line('  AVAILABLE COMMANDS')
+        end
         print_line('  ' + '─' * 72)
         commands.each do |cmd, desc|
           print_line("  \e[36m#{cmd.ljust(22)}\e[0m #{desc}")
