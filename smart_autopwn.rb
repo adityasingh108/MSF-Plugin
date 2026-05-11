@@ -2,7 +2,7 @@
 # SmartAutoPwn - Intelligent Automated Exploitation Plugin for Metasploit Framework
 #
 # Author  : Aditya Singh
-# Version : 3.0.2 (Syntax & Logic Fixed)
+# Version : 3.0.0
 # License : MIT (for authorized penetration testing only)
 #
 # FEATURES:
@@ -16,6 +16,10 @@
 #   - Auto-exploit with configurable rank threshold
 #   - HTML + PDF + JSON report generation
 #   - Full pipeline with one command: smart_scan <IP>
+#
+# INSTALL:
+#   cp smart_autopwn.rb ~/.msf4/plugins/
+#   msfconsole -x "load smart_autopwn"
 ##
 
 require 'thread'
@@ -417,55 +421,49 @@ module Msf
           return
         end
 
-        threads   = opts['threads']   || 200
-        top_ports = opts['top-ports'] || 1000
+        threads   = opts['threads'] || 200
         do_udp    = opts.key?('udp')
         outdir    = '/tmp/smartautopwn_scans'
         FileUtils.mkdir_p(outdir)
         safe_ip   = target.gsub('.', '_')
 
         print_status("Port scan started on \e[33m#{target}\e[0m")
-        print_status("  TCP top-#{top_ports} ports | Threads: #{threads}#{do_udp ? ' | UDP top-200' : ''}")
+        print_status("  Mode    : Full TCP (-p- all 65535 ports) + default scripts (-sC)#{do_udp ? ' + UDP top-200' : ''}")
+        print_status("  Threads : #{threads}")
         print_line
 
-        # ── TCP scan ──────────────────────────────────────────────────
+        # TCP full port scan with default scripts
         tcp_xml = "#{outdir}/tcp_#{safe_ip}_#{timestamp_tag}.xml"
-        tcp_cmd = [
-          'nmap', '-sV', '-sC', '-T4',
-          '--open',
-          "--top-ports #{top_ports}",
-          "--min-parallelism #{threads}",
-          "-oX #{tcp_xml}",
-          "-oN -",   # also print to stdout
-          target
-        ].join(' ')
+        tcp_cmd = "nmap -sV -sC -T4 -p- --open --min-parallelism #{threads} -oX #{tcp_xml} #{target}"
 
-        print_status("Running TCP scan...")
+        print_status("Running TCP full scan (all 65535 ports + default scripts)...")
         print_line("  CMD: #{tcp_cmd}")
         tcp_out, tcp_ok = run_cmd(tcp_cmd)
 
-        if tcp_ok
+        if tcp_ok && File.exist?(tcp_xml)
           print_good("TCP scan complete. Importing to database...")
           import_nmap_xml(tcp_xml)
           display_open_ports(tcp_out)
+        elsif tcp_ok && !File.exist?(tcp_xml)
+          print_error("XML file not created – check nmap write permissions on #{outdir}")
         else
-          print_error("TCP scan failed: #{tcp_out.lines.first(3).join}")
+          print_error("TCP scan failed: #{tcp_out.to_s.lines.first(3).join.strip}")
         end
 
-        # ── UDP scan ──────────────────────────────────────────────────
+        # UDP scan (optional)
         if do_udp
           udp_xml = "#{outdir}/udp_#{safe_ip}_#{timestamp_tag}.xml"
-          udp_cmd = "nmap -sU --top-ports 200 -T4 --open -oX #{udp_xml} -oN - #{target}"
-          print_status("Running UDP scan (requires root/sudo)...")
+          udp_cmd = "nmap -sU --top-ports 200 -T4 --open -oX #{udp_xml} #{target}"
+          print_status("Running UDP scan (top 200 ports, requires root)...")
           print_line("  CMD: #{udp_cmd}")
           udp_out, udp_ok = run_cmd(udp_cmd)
 
-          if udp_ok
+          if udp_ok && File.exist?(udp_xml)
             print_good("UDP scan complete. Importing to database...")
             import_nmap_xml(udp_xml)
             display_open_ports(udp_out)
           else
-            print_warning("UDP scan error (expected without root): #{udp_out.lines.first(2).join.strip}")
+            print_warning("UDP scan failed (run as root for UDP): #{udp_out.to_s.lines.first(2).join.strip}")
           end
         end
 
@@ -794,10 +792,6 @@ module Msf
         # AI sort: descending by ai_score, then by rank
         all_exploits.sort_by! { |e| [-e[:ai_score], -(EXPLOIT_RANK_SCORES[e[:module]['rank']] || 0)] }
 
-        # Cache for autopwn
-        @ranked_exploits       ||= {}
-        @ranked_exploits[target] = all_exploits
-
         if all_exploits.empty?
           print_warning("No exploits found for #{target} above rank: #{min_rank_name}")
           return
@@ -805,7 +799,7 @@ module Msf
 
         print_good("Found \e[32m#{all_exploits.size}\e[0m exploit(s) for #{target}:")
         print_line
-        print_line("  \e[36m#{'RANK'.ljust(16)} AISCORE  PORT   SERVICE     MODULE\e[0m")
+        print_line("  \e[36m#{'RANK'.ljust(16)} AISCORE  PORT   SERVICE     MODULE'\e[0m")
         print_line('  ' + '─' * 78)
 
         all_exploits.first(25).each_with_index do |e, idx|
@@ -828,6 +822,10 @@ module Msf
         print_line
         print_status("Showing top 25 of #{all_exploits.size} total. Use --rank excellent for top-tier only.")
         print_status("Run: smart_autopwn #{target} --rank excellent   to auto-attempt these")
+
+        # Cache for autopwn
+        @ranked_exploits       ||= {}
+        @ranked_exploits[target] = all_exploits
       end
 
       # ================================================================
@@ -844,32 +842,33 @@ module Msf
         stop_on_session  = opts.key?('stop-on-session')
 
         print_status("SmartAutoPwn: launching auto-exploitation on \e[33m#{target}\e[0m")
-        print_status("  Min Rank : #{min_rank_name} (score >= #{min_score})")
+        print_status("  Min Rank : #{min_rank_name} (score ≥ #{min_score})")
         print_status("  LHOST    : #{lhost}")
         print_status("  LPORT    : #{lport_base}+")
         print_line
 
-        # Ensure the cache hash is initialized
+        # Ensure we have exploit data – guard against nil @ranked_exploits
         @ranked_exploits ||= {}
-
-        # Ensure we have exploit data
-        if @ranked_exploits[target].nil? || @ranked_exploits[target].empty?
+        unless @ranked_exploits[target] && !@ranked_exploits[target].empty?
           print_status("No cached exploit list. Running smart_exploits first...")
           cmd_smart_exploits(target)
+          @ranked_exploits ||= {}
         end
 
-        # Safety check if still nil or empty (e.g. no services found in DB)
-        if @ranked_exploits[target].nil? || @ranked_exploits[target].empty?
-          print_error("No exploits found to attempt. Verify services are in the DB (smart_portscan).")
+        cached = @ranked_exploits[target]
+        if cached.nil? || cached.empty?
+          print_warning("No exploits found for #{target}.")
+          print_status("  Run smart_portscan #{target} first, then retry smart_autopwn.")
           return
         end
 
-        exploits = @ranked_exploits[target].select do |e|
+        exploits = cached.select do |e|
           (EXPLOIT_RANK_SCORES[e[:module]['rank']] || 0) >= min_score
         end
 
         if exploits.empty?
           print_warning("No exploits with rank >= #{min_rank_name} found for #{target}")
+          print_status("  Tip: lower the rank:  smart_autopwn #{target} --rank good")
           return
         end
 
@@ -1086,11 +1085,32 @@ module Msf
       end
 
       def import_nmap_xml(xml_file)
-        return unless File.exist?(xml_file) && db_active?
-        framework.db.import_file(filename: xml_file)
-        print_good("Imported to DB: #{xml_file}")
-      rescue => e
-        print_warning("DB import failed: #{e.message}")
+        unless File.exist?(xml_file)
+          print_warning("XML file not found: #{xml_file}")
+          return
+        end
+        unless db_active?
+          print_warning("Database not connected – scan results NOT saved. Run: db_connect")
+          return
+        end
+        begin
+          # Try workspace-aware import first (Metasploit >= 6)
+          ws = framework.db.workspace
+          framework.db.import_file(filename: xml_file, wspace: ws)
+          print_good("Imported to DB [workspace: #{ws.name}]: #{xml_file}")
+        rescue ArgumentError
+          # Fallback: older Metasploit API without wspace param
+          begin
+            framework.db.import_file(filename: xml_file)
+            print_good("Imported to DB: #{xml_file}")
+          rescue => e2
+            print_warning("DB import failed: #{e2.message}")
+            print_status("  Manual import: db_import #{xml_file}")
+          end
+        rescue => e
+          print_warning("DB import failed: #{e.message}")
+          print_status("  Manual import: db_import #{xml_file}")
+        end
       end
 
       # ── Command execution ─────────────────────────────────────────────
