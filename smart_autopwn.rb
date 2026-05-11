@@ -1,7 +1,7 @@
 ##
 # SmartAutoPwn - Intelligent Automated Exploitation Plugin for Metasploit Framework
 #
-# Author  : Aditya Singh
+# Author  : SmartAutoPwn Project
 # Version : 3.0.0
 # License : MIT (for authorized penetration testing only)
 #
