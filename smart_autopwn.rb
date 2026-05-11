@@ -1,7 +1,7 @@
-##
+#
 # SmartAutoPwn - Intelligent Automated Exploitation Plugin for Metasploit Framework
 #
-# Author  : SmartAutoPwn Project
+# Author  : Aditya Singh
 # Version : 3.0.0
 # License : MIT (for authorized penetration testing only)
 #
@@ -517,52 +517,44 @@ module Msf
         FileUtils.mkdir_p(outdir)
         nse_xml = "#{outdir}/nse_#{target.gsub('.','_')}_#{timestamp_tag}.xml"
 
+        # Only use scripts/categories verified to exist in nmap 7.x+
+        # Removed: http-vuln-cve2021-41773, http-vuln-cve2017-5638,
+        #          http-vuln-cve2014-3704, smb-vuln-cve-2017-7494,
+        #          smb-vuln-regsvc-dos, ms-sql-empty-password,
+        #          mysql-empty-password, vnc-info (not always present)
+        # Using broad categories first, then safe individual scripts
         nse_scripts = %w[
           vuln
           auth
-          exploit
           safe
           smb-vuln-ms17-010
           smb-vuln-ms08-067
-          smb-vuln-cve-2017-7494
-          smb-vuln-regsvc-dos
-          http-vuln-cve2014-3704
-          http-vuln-cve2017-5638
-          http-vuln-cve2021-41773
-          http-shellshock
-          ftp-vsftpd-backdoor
-          ftp-proftpd-backdoor
           ssl-heartbleed
           ssl-poodle
-          rdp-vuln-ms12-020
-          ms-sql-empty-password
-          mysql-empty-password
-          vnc-info
+          ftp-vsftpd-backdoor
+          ftp-proftpd-backdoor
+          http-shellshock
           smtp-vuln-cve2010-4344
         ].join(',')
 
-        nse_cmd = [
-          'nmap', '-sV',
-          "--script=\"#{nse_scripts}\"",
-          '-T4', '--open',
-          "-oX #{nse_xml}",
-          '-oN -',
-          target
-        ].join(' ')
+        # Build command WITHOUT -oN - (causes nmap to mix stdout with XML)
+        nse_cmd = "nmap -sV --script=\"#{nse_scripts}\" -T4 --open -oX #{nse_xml} #{target}"
 
         print_status("Running NSE vulnerability scripts on \e[33m#{target}\e[0m...")
-        print_line("  Scripts  : #{nse_scripts.split(',').size} script categories/names")
-        print_line("  CMD      : #{nse_cmd}")
+        print_status("  Scripts : #{nse_scripts.split(',').size} categories/scripts")
+        print_line("  CMD     : #{nse_cmd}")
         print_line
 
         out, ok = run_cmd(nse_cmd)
 
-        if ok
-          print_good("NSE scan complete. Importing results...")
+        if ok && File.exist?(nse_xml)
+          print_good("NSE scan complete. Importing results to DB...")
           import_nmap_xml(nse_xml)
           display_nse_vulns(out)
+        elsif !File.exist?(nse_xml)
+          print_error("NSE XML not created. Raw output:\n#{out.to_s.lines.first(5).join.strip}")
         else
-          print_error("NSE scan failed: #{out.lines.first(3).join.strip}")
+          print_error("NSE scan failed:\n#{out.to_s.lines.first(5).join.strip}")
         end
       end
 
@@ -1077,9 +1069,40 @@ module Msf
 
       def get_services(target)
         return [] unless db_active?
-        host = framework.db.get_host(address: target) rescue nil
+        host = nil
+
+        # Method 1: workspace-aware lookup (MSF >= 6)
+        begin
+          ws   = framework.db.workspace
+          host = framework.db.get_host(workspace: ws, address: target)
+        rescue ArgumentError
+          # Method 2: address-only lookup (older MSF)
+          begin
+            host = framework.db.get_host(address: target)
+          rescue
+            host = nil
+          end
+        rescue
+          host = nil
+        end
+
+        # Method 3: scan all hosts in workspace (last resort)
+        if host.nil?
+          begin
+            host = framework.db.hosts.find { |h| h.address.to_s == target.to_s }
+          rescue
+            host = nil
+          end
+        end
+
         return [] unless host
-        host.services.to_a.reject { |s| s.state == 'closed' rescue false }
+
+        # Reject closed/filtered, keep open services
+        begin
+          host.services.to_a.select { |s| (s.state || 'open').to_s != 'closed' }
+        rescue
+          []
+        end
       rescue
         []
       end
